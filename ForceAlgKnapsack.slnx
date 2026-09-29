@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/Labs/">
+    <Project Path="Labs/GeneticAlgKnapsack/GeneticAlgKnapsack.csproj" />
+    <Project Path="Labs\ForceAlgKnapsack\ForceAlgKnapsack.csproj" />
+  </Folder>
+</Solution>
