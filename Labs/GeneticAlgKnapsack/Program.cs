@@ -1,4 +1,5 @@
-﻿using System.Threading;
+﻿using System.Diagnostics;
+using System.Threading;
 
 class Program
 {
@@ -9,12 +10,11 @@ class Program
     static int maxW = 60;
     static int minValue  = 1;
     static int maxValue  = 10;
-    static int countItem = 10;
+    static int countItem = 20;
     static int populationSize = 100;
     static int tournamentSize = 3;
-    static double mutationRate = 0.05;
-    static int generationCount = 1000;
-    static Random seed = new Random();
+    static double mutationRate = 0.5;
+    static int generationCount = 5000;
 
     // Structure to represent an item with weight and value
     struct Item
@@ -29,7 +29,7 @@ class Program
         public int W;
         public List<Item> items;
 
-        public static KnapsackTask CreateKnapsackRandom()
+        public static KnapsackTask CreateKnapsackRandom(Random seed)
         {
             KnapsackTask knapsack = new KnapsackTask
             {
@@ -58,7 +58,7 @@ class Program
         public int sumValue;  // Total sum value for cache
         public int fitness;   // Validation of the individ
 
-        public static Individual CreateIndividRandom(KnapsackTask task)
+        public static Individual CreateIndividRandom(KnapsackTask task, Random seed)
         {
             Individual individual = new Individual
             {
@@ -93,7 +93,7 @@ class Program
     struct Population
     {
         public List<Individual> individuals;
-        public static Population CreatePopulationRandom(KnapsackTask task)
+        public static Population CreatePopulationRandom(KnapsackTask task, Random seed)
         {
             Population population = new Population
             {
@@ -101,7 +101,7 @@ class Program
             };
             for (int i = 0; i < populationSize; i++)
             {
-                population.individuals.Add(Individual.CreateIndividRandom(task));
+                population.individuals.Add(Individual.CreateIndividRandom(task, seed));
             }
             return population;
         }
@@ -121,7 +121,7 @@ class Program
         return bestIndividual;
     }
 
-    static Individual Selection(Population population)
+    static Individual Selection(Population population, Random seed)
     {
         Individual bestIndivid = population.individuals[seed.Next(population.individuals.Count)];
 
@@ -137,7 +137,7 @@ class Program
         return bestIndivid;
     }
 
-    static Individual Crossover(Individual parent1, Individual parent2, KnapsackTask task )
+    static Individual Crossover(Individual parent1, Individual parent2, KnapsackTask task, Random seed)
     {
         Individual child = new Individual
         {
@@ -163,7 +163,7 @@ class Program
         return child;
     }
 
-    static Individual Mutate(Individual individual, KnapsackTask task)
+    static Individual Mutate(Individual individual, KnapsackTask task, Random seed)
     {
         for (int i = 0; i < individual.genes.Count; i++)
         {
@@ -178,45 +178,62 @@ class Program
         return individual;
     }
 
-    static Population CreateNewPopulation( Population population, KnapsackTask task)
+    static Population CreateNewPopulation(Population population, KnapsackTask task, int threadCount)
     {
+        List<Individual> newIndividuals = new List<Individual>(new Individual[population.individuals.Count]);
+
+        ParallelOptions options = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = threadCount
+        };
+
+        Parallel.For(0, population.individuals.Count, options, i =>
+        {
+            Random seedPopulation = new Random( i + threadCount);
+
+            Individual parent1 = Selection(population, seedPopulation);
+            Individual parent2 = Selection(population, seedPopulation);
+
+            Individual child = Crossover(parent1, parent2, task, seedPopulation);
+
+            child = Mutate(child, task, seedPopulation);
+
+            newIndividuals[i] = child;
+        });
+
         Population newPopulation = new Population
         {
-            individuals = new List<Individual>()
+            individuals = newIndividuals
         };
-        for (int i = 0; i < population.individuals.Count; i++)
-        {
-            Individual parent1 = Selection(population);
-            Individual parent2 = Selection(population);
-            Individual child = Crossover(parent1, parent2, task);
-            child = Mutate(child, task);
-            newPopulation.individuals.Add(child);
-        }
+
         return newPopulation;
     }
 
-    static void RunGeneticAlg(KnapsackTask task)
+    static void RunGeneticAlg(KnapsackTask task, Random seed, int threadCount, bool debugInfo)
     {
-        Population population = Population.CreatePopulationRandom(task);
+        Population population = Population.CreatePopulationRandom(task, seed);
         
         Individual bestIndividual = GetBestIndividual(population);
 
         for (int generation = 0; generation < generationCount; generation++)
         {
-            population = CreateNewPopulation(population, task);
+            population = CreateNewPopulation(population, task, threadCount);
             Individual bestTotalIndividual = GetBestIndividual(population);
-            
-            if( bestIndividual.fitness < bestTotalIndividual.fitness)
+
+            if (bestIndividual.fitness < bestTotalIndividual.fitness)
             {
                 bestIndividual = bestTotalIndividual;
             }
 
-            Console.WriteLine();
-            Console.WriteLine($"Generation {generation + 1}: Best Fitness = {bestIndividual.fitness}, Weight = {bestIndividual.sumWeight}, Value = {bestIndividual.sumValue}");
-            Console.WriteLine("__________________________________________________________");
-            Console.WriteLine($"Mask: {string.Join("", bestIndividual.genes.Select( b => b ? "1" : "0"))}");
-            Console.WriteLine("__________________________________________________________");
-            Console.WriteLine();
+            if (debugInfo)
+            { 
+                Console.WriteLine();
+                Console.WriteLine($"Generation {generation + 1}: Best Fitness = {bestIndividual.fitness}, Weight = {bestIndividual.sumWeight}, Value = {bestIndividual.sumValue}");
+                Console.WriteLine("__________________________________________________________");
+                Console.WriteLine($"Mask: {string.Join("", bestIndividual.genes.Select( b => b ? "1" : "0"))}");
+                Console.WriteLine("__________________________________________________________");
+                Console.WriteLine();
+            }
         }
 
         Console.WriteLine("__________________________________________________________");
@@ -256,7 +273,8 @@ class Program
     static void Main()
     {
         Console.WriteLine("Genetic Algorithm for Knapsack Problem");
-        KnapsackTask task = KnapsackTask.CreateKnapsackRandom();
+        Random seed = new Random();
+        KnapsackTask task = KnapsackTask.CreateKnapsackRandom(seed);
         Console.WriteLine($"Knapsack Weight Limit: {task.W}");
         Console.WriteLine("Items:");
 
@@ -265,10 +283,27 @@ class Program
             Console.WriteLine($"Item {i + 1}: Weight = {task.items[i].weight}, Value = {task.items[i].value}");
         }
 
-        RunGeneticAlg(task);
+        Stopwatch stopwatch1 = new Stopwatch();
+        stopwatch1.Start();
+        RunGeneticAlg(task, seed, 1, false);
+        stopwatch1.Stop();
 
+        Stopwatch stopwatch2 = new Stopwatch();
+        stopwatch2.Start();
+        RunGeneticAlg(task, seed, 16, false);
+        stopwatch2.Stop();
+
+        Stopwatch stopwatch3 = new Stopwatch();
+        stopwatch3.Start();
+        RunGeneticAlg(task, seed, 32, false);
+        stopwatch3.Stop();
 
         Console.WriteLine("__________________________________________________________");
+        Console.WriteLine($"Time taken 1 thread: {stopwatch1.ElapsedMilliseconds} ms");
+        Console.WriteLine($"Time taken 16 threads: {stopwatch2.ElapsedMilliseconds} ms");
+        Console.WriteLine($"Time taken 32 threads: {stopwatch3.ElapsedMilliseconds} ms");
+
+
         Console.WriteLine("Optimal:");
         Console.WriteLine($"Best Value = {FindOptimalKnapsack(task)}");
         Console.WriteLine("__________________________________________________________");
