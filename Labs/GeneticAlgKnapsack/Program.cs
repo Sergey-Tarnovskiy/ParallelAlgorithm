@@ -15,6 +15,10 @@ class Program
     static int tournamentSize = 3;
     static double mutationRate = 0.5;
     static int generationCount = 5000;
+    static int islandCount = 4;
+    static bool debugInfo = false;
+    static int migrationInterval = generationCount/100;
+    static int migrationSize = populationSize / 10;
 
     // Structure to represent an item with weight and value
     struct Item
@@ -209,21 +213,82 @@ class Program
         return newPopulation;
     }
 
-    static void RunGeneticAlg(KnapsackTask task, Random seed, int threadCount, bool debugInfo)
+    static void Migration(List<Population> islands)
     {
-        Population population = Population.CreatePopulationRandom(task, seed);
+        List<List<Individual>> migrants = new List<List<Individual>>();
+
+        for (int island = 0; island < islandCount; island++)
+        {
+            List<Individual> bestIndividuals = new List<Individual>(islands[island].individuals);
+
+            bestIndividuals.Sort( (a, b) => b.fitness.CompareTo(a.fitness) );
+
+            bestIndividuals = bestIndividuals.GetRange(0, migrationSize);
+
+            migrants.Add(bestIndividuals);
+        }
+
+        for (int island = 0; island < islandCount; island++)
+        {
+            int ind = (island + 1) % islandCount;
+
+            islands[ind].individuals.Sort( (a, b) => a.fitness.CompareTo(b.fitness) );
+
+            for (int i = 0; i < migrationSize; i++)
+            {
+                islands[ind].individuals[i] = migrants[island][i];
+            }
+        }
+    }
+
+    static void RunGeneticAlg(KnapsackTask task, Random seed, int threadCount, bool useMigration)
+    {
+        List<Population> islands = new List<Population>();
+
+        //islandCount = threadCount; // TODO: Replace it
         
-        Individual bestIndividual = GetBestIndividual(population);
+        for (int island = 0; island < islandCount; island++)
+        {
+            islands.Add( Population.CreatePopulationRandom(task, seed) );
+        }
+
+        Individual bestIndividual = GetBestIndividual(islands[0]);
+        
+        object bestLock = new object();
+
+        Barrier barrier = new Barrier(islandCount);
+
+        ParallelOptions options = new ParallelOptions
+        {
+            MaxDegreeOfParallelism = islandCount
+        };
+
 
         for (int generation = 0; generation < generationCount; generation++)
         {
-            population = CreateNewPopulation(population, task, threadCount);
-            Individual bestTotalIndividual = GetBestIndividual(population);
 
-            if (bestIndividual.fitness < bestTotalIndividual.fitness)
+            //for( int island = 0; island < islandCount; island++ )
+            //{
+            Parallel.For(0, islandCount, options, island =>
             {
-                bestIndividual = bestTotalIndividual;
-            }
+                islands[island] = CreateNewPopulation(islands[island], task, threadCount);
+                Individual bestIslandIndividual = GetBestIndividual(islands[island]);
+
+                lock (bestLock)
+                {
+                    if (bestIslandIndividual.fitness > bestIndividual.fitness)
+                    {
+                        bestIndividual = bestIslandIndividual;
+                    }
+                }
+
+                barrier.SignalAndWait();
+                if ( island == 0 && useMigration && (generation + 1) % migrationInterval == 0)
+                {
+                    Migration(islands);
+                }
+                barrier.SignalAndWait();
+            });
 
             if (debugInfo)
             { 
@@ -282,20 +347,20 @@ class Program
         {
             Console.WriteLine($"Item {i + 1}: Weight = {task.items[i].weight}, Value = {task.items[i].value}");
         }
-
+        bool useMigration = true;
         Stopwatch stopwatch1 = new Stopwatch();
         stopwatch1.Start();
-        RunGeneticAlg(task, seed, 1, false);
+        RunGeneticAlg(task, seed, 1, useMigration);
         stopwatch1.Stop();
 
         Stopwatch stopwatch2 = new Stopwatch();
         stopwatch2.Start();
-        RunGeneticAlg(task, seed, 16, false);
+        RunGeneticAlg(task, seed, 16, useMigration);
         stopwatch2.Stop();
 
         Stopwatch stopwatch3 = new Stopwatch();
         stopwatch3.Start();
-        RunGeneticAlg(task, seed, 32, false);
+        RunGeneticAlg(task, seed, 32, useMigration);
         stopwatch3.Stop();
 
         Console.WriteLine("__________________________________________________________");
